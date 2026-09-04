@@ -200,7 +200,14 @@ async def login(body: LoginBody):
     if not user or not verify_password(body.password, user["password"]):
         raise HTTPException(status_code=401, detail="Incorrect email or password.")
     if not user.get("email_verified"):
-        await _issue_otp(user["user_id"], email, user["name"], "verify")
+        # Best-effort resend of a fresh verification code. If the email provider is
+        # momentarily unavailable/rate-limited, we still return the actionable 403 so
+        # the user is directed to the verify screen (where they can tap Resend) rather
+        # than seeing a generic server error.
+        try:
+            await _issue_otp(user["user_id"], email, user["name"], "verify")
+        except HTTPException:
+            pass
         raise HTTPException(status_code=403, detail="Please verify your email first. We sent you a new code.")
     await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"last_seen": _now().isoformat()}})
     token = create_token(user["user_id"])

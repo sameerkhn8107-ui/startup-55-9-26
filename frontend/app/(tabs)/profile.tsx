@@ -1,5 +1,5 @@
-import { useState, useCallback } from "react";
-import { View, ScrollView, Pressable, Modal, StyleSheet, Linking } from "react-native";
+import { useState, useCallback, useEffect } from "react";
+import { View, ScrollView, Pressable, Modal, StyleSheet, Linking, Keyboard, Platform } from "react-native";
 import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -19,11 +19,35 @@ export default function Profile() {
   const [editOpen, setEditOpen] = useState(false);
   const [name, setName] = useState(user?.name || "");
   const [bio, setBio] = useState(user?.bio || "");
+  const [nameErr, setNameErr] = useState("");
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [photoMenu, setPhotoMenu] = useState(false);
   const [photoBusy, setPhotoBusy] = useState(false);
   const [reqCount, setReqCount] = useState(0);
+  // Component-level keyboard handling for the Edit Profile bottom sheet only.
+  // Raises the bottom-anchored sheet above the keyboard so the focused input and
+  // Save button stay visible; returns to original position when the keyboard hides.
+  const [editKbOffset, setEditKbOffset] = useState(0);
+  useEffect(() => {
+    const showEvt = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvt = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    const s = Keyboard.addListener(showEvt, (e) => setEditKbOffset(e?.endCoordinates?.height ?? 0));
+    const h = Keyboard.addListener(hideEvt, () => setEditKbOffset(0));
+    return () => { s.remove(); h.remove(); };
+  }, []);
+
+  const openEdit = () => {
+    setName(user?.name || "");
+    setBio(user?.bio || "");
+    setNameErr("");
+    setEditOpen(true);
+  };
+  const closeEdit = () => {
+    if (saving) return; // don't dismiss mid-save
+    Keyboard.dismiss();
+    setEditOpen(false);
+  };
 
   useFocusEffect(useCallback(() => {
     api.get("/contacts/requests").then((r) => setReqCount(r.requests?.length || 0)).catch(() => {});
@@ -56,14 +80,26 @@ export default function Profile() {
   };
 
   const saveProfile = async () => {
+    if (saving) return; // guard against double taps
+    const trimmedName = name.trim();
+    const trimmedBio = bio.trim();
+    if (!trimmedName) { setNameErr("Please enter your name."); return; }
+    if (trimmedName.length > 60) { setNameErr("Name is too long (max 60 characters)."); return; }
+    if (trimmedBio.length > 200) { setNameErr("Bio is too long (max 200 characters)."); return; }
+    setNameErr("");
     setSaving(true);
     try {
-      const res = await api.put<{ user: any }>("/auth/me", { name, bio });
+      const res = await api.put<{ user: any }>("/auth/me", { name: trimmedName, bio: trimmedBio });
+      if (!res?.user) throw new Error("We received an unexpected response. Please try again.");
       setUser(res.user);
       toast.show("Profile updated", "success");
+      Keyboard.dismiss();
       setEditOpen(false);
-    } catch { toast.show("Failed to update", "error"); }
-    finally { setSaving(false); }
+    } catch (e: any) {
+      // Keep the sheet open so the user can fix input and retry. api errors already
+      // carry a user-safe, category-aware message (network/timeout/server/etc.).
+      toast.show(e?.message || "Couldn't update your profile. Please try again.", "error");
+    } finally { setSaving(false); }
   };
 
   const doDelete = async () => {
@@ -86,7 +122,7 @@ export default function Profile() {
           <AppText size="xxl" weight="heavy" style={{ marginTop: spacing.md }}>{user?.name}</AppText>
           <AppText muted>@{user?.username}</AppText>
           {user?.bio ? <AppText center style={{ marginTop: 6, maxWidth: 280 }}>{user.bio}</AppText> : null}
-          <Pressable testID="edit-profile-button" onPress={() => setEditOpen(true)} style={{ marginTop: spacing.md, flexDirection: "row", alignItems: "center", paddingHorizontal: spacing.lg, height: 40, borderRadius: radius.pill, backgroundColor: colors.brandTertiary }}>
+          <Pressable testID="edit-profile-button" onPress={openEdit} style={{ marginTop: spacing.md, flexDirection: "row", alignItems: "center", paddingHorizontal: spacing.lg, height: 40, borderRadius: radius.pill, backgroundColor: colors.brandTertiary }}>
             <Icon name="create-outline" size={16} color={colors.brandPrimary} />
             <AppText weight="semibold" color={colors.brandPrimary} style={{ marginLeft: 6 }}>Edit Profile</AppText>
           </Pressable>
@@ -142,11 +178,11 @@ export default function Profile() {
       </ScrollView>
 
       {/* Edit modal */}
-      <Modal visible={editOpen} transparent animationType="slide" onRequestClose={() => setEditOpen(false)}>
-        <Pressable style={{ flex: 1, backgroundColor: colors.overlay }} onPress={() => setEditOpen(false)} />
-        <View style={[styles.sheet, { backgroundColor: colors.card, paddingBottom: insets.bottom + spacing.lg }]}>
+      <Modal visible={editOpen} transparent animationType="slide" onRequestClose={closeEdit}>
+        <Pressable style={{ flex: 1, backgroundColor: colors.overlay }} onPress={closeEdit} />
+        <View style={[styles.sheet, { backgroundColor: colors.card, bottom: editKbOffset, paddingBottom: (editKbOffset > 0 ? spacing.lg : insets.bottom + spacing.lg) }]}>
           <AppText weight="bold" size="lg" style={{ marginBottom: spacing.md }}>Edit Profile</AppText>
-          <Input testID="edit-name" label="Name" value={name} onChangeText={setName} autoCapitalize="words" />
+          <Input testID="edit-name" label="Name" value={name} onChangeText={(t: string) => { setName(t); if (nameErr) setNameErr(""); }} autoCapitalize="words" error={nameErr} returnKeyType="done" />
           <Input testID="edit-bio" label="Bio" value={bio} onChangeText={setBio} placeholder="A short bio" multiline />
           <Button testID="save-profile" title="Save" onPress={saveProfile} loading={saving} />
         </View>

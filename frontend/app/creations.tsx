@@ -1,5 +1,5 @@
-import { useState, useCallback } from "react";
-import { View, ScrollView, Pressable, Modal, StyleSheet, ActivityIndicator } from "react-native";
+import { useState, useCallback, useEffect } from "react";
+import { View, ScrollView, Pressable, Modal, StyleSheet, ActivityIndicator, Keyboard, Platform } from "react-native";
 import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -29,6 +29,23 @@ export default function Creations() {
   const [kind, setKind] = useState("document");
   const [prompt, setPrompt] = useState("");
   const [creating, setCreating] = useState(false);
+  // Component-level keyboard handling for the "Create with Chatly" bottom sheet only.
+  // Raises the bottom-anchored sheet above the keyboard so the prompt input and
+  // Generate button stay visible; returns to original position when it hides.
+  const [addKbOffset, setAddKbOffset] = useState(0);
+  useEffect(() => {
+    const showEvt = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvt = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    const s = Keyboard.addListener(showEvt, (e) => setAddKbOffset(e?.endCoordinates?.height ?? 0));
+    const h = Keyboard.addListener(hideEvt, () => setAddKbOffset(0));
+    return () => { s.remove(); h.remove(); };
+  }, []);
+
+  const closeAdd = () => {
+    if (creating) return; // don't dismiss while generating
+    Keyboard.dismiss();
+    setAddOpen(false);
+  };
 
   const load = useCallback(async () => {
     try { const res = await api.get("/ai/creations"); setItems(res.creations); } catch {} finally { setLoading(false); }
@@ -36,14 +53,24 @@ export default function Creations() {
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
   const create = async () => {
-    if (!prompt.trim()) return;
+    if (creating) return; // guard against double taps
+    const trimmed = prompt.trim();
+    if (!trimmed) { toast.show("Please describe what you'd like to create.", "error"); return; }
+    if (trimmed.length > 2000) { toast.show("That prompt is too long. Please shorten it.", "error"); return; }
     setCreating(true);
     try {
-      const res = await api.post<{ id: string }>("/ai/create", { kind, prompt: prompt.trim() });
-      setPrompt(""); setAddOpen(false); load();
+      const res = await api.post<{ id: string }>("/ai/create", { kind, prompt: trimmed });
+      if (!res?.id) throw new Error("We received an unexpected response. Please try again.");
+      setPrompt("");
+      Keyboard.dismiss();
+      setAddOpen(false);
+      load();
       router.push({ pathname: "/creation/[id]", params: { id: res.id } });
-    } catch (e: any) { toast.show(e.message || "Failed to create", "error"); }
-    finally { setCreating(false); }
+    } catch (e: any) {
+      // Keep the sheet open and the prompt intact so the user can retry. api errors
+      // already carry a user-safe, category-aware message (network/timeout/server/etc.).
+      toast.show(e?.message || "Couldn't generate this right now. Please try again.", "error");
+    } finally { setCreating(false); }
   };
 
   const del = async (id: string) => { setItems((p) => p.filter((x) => x.id !== id)); try { await api.del(`/ai/creations/${id}`); } catch {} };
@@ -72,9 +99,9 @@ export default function Creations() {
         </ScrollView>
       )}
 
-      <Modal visible={addOpen} transparent animationType="slide" onRequestClose={() => setAddOpen(false)}>
-        <Pressable style={{ flex: 1, backgroundColor: colors.overlay }} onPress={() => !creating && setAddOpen(false)} />
-        <View style={[styles.sheet, { backgroundColor: colors.card, paddingBottom: insets.bottom + spacing.lg }]}>
+      <Modal visible={addOpen} transparent animationType="slide" onRequestClose={closeAdd}>
+        <Pressable style={{ flex: 1, backgroundColor: colors.overlay }} onPress={closeAdd} />
+        <View style={[styles.sheet, { backgroundColor: colors.card, bottom: addKbOffset, paddingBottom: (addKbOffset > 0 ? spacing.lg : insets.bottom + spacing.lg) }]}>
           <AppText weight="bold" size="lg" style={{ marginBottom: spacing.md }}>Create with Chatly</AppText>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm, paddingBottom: spacing.md }}>
             {KINDS.map((k) => (
