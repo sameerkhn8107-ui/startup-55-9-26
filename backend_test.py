@@ -9,7 +9,7 @@ import sys
 from typing import Dict, Any
 
 # Backend URL from frontend/.env
-BASE_URL = "https://jovial-shaw-8.preview.emergentagent.com/api"
+BASE_URL = "https://app-executor-28.preview.emergentagent.com/api"
 
 # Test credentials
 TEST_EMAIL = "delivered@resend.dev"
