@@ -24,7 +24,7 @@
       },
       "edgeToEdgeEnabled": true,
       "softwareKeyboardLayoutMode": "resize",
-      "package": "com.emergent.aimessenger.bq2ltq",
+      "package": "emergent.aimescom.senger.bq2ltq",
       "permissions": [
         "CAMERA",
         "RECORD_AUDIO",
